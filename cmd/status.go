@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/ksred/cctrack/internal/calculator"
 	"github.com/ksred/cctrack/internal/config"
 	"github.com/ksred/cctrack/internal/parser"
 	"github.com/ksred/cctrack/internal/store"
@@ -57,6 +58,19 @@ var statusCmd = &cobra.Command{
 				name = top[0].ID[:8]
 			}
 			fmt.Printf("Top session: \"%s\" — $%s\n", name, fmtCost(top[0].TotalCost))
+		}
+
+		// Report any stored requests whose model matches no pricing entry;
+		// those were priced at the fallback rates rather than a list price.
+		counts, err := s.GetModelRequestCounts()
+		if err != nil {
+			return fmt.Errorf("getting model counts: %w", err)
+		}
+		for _, mc := range counts {
+			if _, known := calculator.LookupRates(mc.Model); !known {
+				fmt.Printf("Warning: %d requests on unknown model %q priced at fallback (%s)\n",
+					mc.Count, mc.Model, calculator.FallbackFamily)
+			}
 		}
 
 		return nil

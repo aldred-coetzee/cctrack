@@ -256,6 +256,10 @@ func (s *Store) GetCostBreakdown() (*CostByType, error) {
 		if err := rows.Scan(&model, &inp, &out, &cr, &cw); err != nil {
 			return nil, err
 		}
+		// The sessions table stores only the total cache-write count, not the
+		// 5m/1h split, so this re-pricing charges all cache writes at the 5m
+		// rate and understates the true cache-write share. total_cost (used
+		// everywhere else) is computed at parse time with the correct split.
 		cb := calculator.Calculate(model, calculator.TokenUsage{
 			InputTokens:      inp,
 			OutputTokens:     out,
@@ -306,6 +310,34 @@ func (s *Store) GetModelBreakdown() ([]ModelSummary, error) {
 		results = append(results, m)
 	}
 	return results, nil
+}
+
+// ModelRequestCount is the number of stored requests for one model id.
+type ModelRequestCount struct {
+	Model string
+	Count int64
+}
+
+// GetModelRequestCounts returns request counts per model id across the whole
+// requests table, most frequent first.
+func (s *Store) GetModelRequestCounts() ([]ModelRequestCount, error) {
+	rows, err := s.db.Query(`
+		SELECT model, COUNT(*) FROM requests
+		GROUP BY model ORDER BY COUNT(*) DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ModelRequestCount
+	for rows.Next() {
+		var m ModelRequestCount
+		if err := rows.Scan(&m.Model, &m.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // --- Feature: Activity Heatmap ---

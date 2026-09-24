@@ -121,14 +121,15 @@ func (p *Parser) ParseFile(path string) ([]string, error) {
 
 	// Aggregate token usage per session
 	type sessionAgg struct {
-		model     string
-		slug      string
-		sessionID string
-		timestamp string
-		input     int64
-		output    int64
-		cacheRead int64
-		cacheWrite int64
+		model        string
+		slug         string
+		sessionID    string
+		timestamp    string
+		input        int64
+		output       int64
+		cacheRead    int64
+		cacheWrite   int64
+		cacheWrite1h int64
 	}
 	sessions := make(map[string]*sessionAgg)
 
@@ -166,13 +167,25 @@ func (p *Parser) ParseFile(path string) ([]string, error) {
 		agg.cacheRead += u.CacheReadInputTokens
 		agg.cacheWrite += u.CacheCreationInputTokens
 
+		// The usage block splits cache writes by TTL under
+		// cache_creation.{ephemeral_1h_input_tokens,ephemeral_5m_input_tokens}
+		// (main sessions write 1h, subagents 5m). The 1h part is priced at the
+		// 1h rate; everything else in cache_creation_input_tokens at the 5m
+		// rate. Transcripts without the split therefore price entirely at 5m.
+		var cacheWrite1h int64
+		if u.CacheCreation != nil {
+			cacheWrite1h = u.CacheCreation.Ephemeral1h
+		}
+		agg.cacheWrite1h += cacheWrite1h
+
 		// Store per-request record if we have a requestID
 		if requestID != "" {
 			usage := calculator.TokenUsage{
-				InputTokens:      u.InputTokens,
-				OutputTokens:     u.OutputTokens,
-				CacheReadTokens:  u.CacheReadInputTokens,
-				CacheWriteTokens: u.CacheCreationInputTokens,
+				InputTokens:        u.InputTokens,
+				OutputTokens:       u.OutputTokens,
+				CacheReadTokens:    u.CacheReadInputTokens,
+				CacheWriteTokens:   u.CacheCreationInputTokens,
+				CacheWrite1hTokens: cacheWrite1h,
 			}
 			cost := calculator.Calculate(event.Message.Model, usage)
 			requestRecords = append(requestRecords, store.RequestRecord{
@@ -200,10 +213,11 @@ func (p *Parser) ParseFile(path string) ([]string, error) {
 	var affectedIDs []string
 	for sid, agg := range sessions {
 		usage := calculator.TokenUsage{
-			InputTokens:      agg.input,
-			OutputTokens:     agg.output,
-			CacheReadTokens:  agg.cacheRead,
-			CacheWriteTokens: agg.cacheWrite,
+			InputTokens:        agg.input,
+			OutputTokens:       agg.output,
+			CacheReadTokens:    agg.cacheRead,
+			CacheWriteTokens:   agg.cacheWrite,
+			CacheWrite1hTokens: agg.cacheWrite1h,
 		}
 		cost := calculator.Calculate(agg.model, usage)
 
